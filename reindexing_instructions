@@ -1,0 +1,89 @@
+#Let's say the name of the index we want to reindex is "cdm_sample_prod_index". Note: This index already exist in the cluster
+
+#If there's an existing temporary index of the index to be reindex, ensure to delete it. As a practice, we name the te,porary index with tmp to prefix the produciton index
+DELETE tmp_cdm_sample_prod_index
+
+
+#Then create the destination temporary index. Also ensure the number of replicas is zero and disable refresh interval. You may change the number_of_shards to any value starting from 1, depending o the number of hot nodes in the deployment and the size of the shard. All these index settings would help optimize the reindexing/indexing performance especially when in handling large indices with lots of data
+PUT tmp_cdm_sample_prod_index
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0,
+    "refresh_interval": "-1"
+  }
+}
+
+#Reindex as follows. The parameters "size", "op_type" and "conflicts" all help to optimize the reindexing and ensure reindexing continues even if there are conflicts without creating duplicate documents.
+POST _reindex?wait_for_completion=false
+{
+  "source": {
+    "index": "cdm_sample_prod_index",
+    "size": 5000
+  },
+  "dest": {
+    "index": "tmp_cdm_sample_prod_index",
+    "op_type": "create"
+  },
+  "conflicts": "proceed"
+}
+
+
+#Retrieve the task_id from the step above and run the following command to track the progress of the reindex
+GET _tasks/<task_id>
+
+
+#Once since is completed, refresh the destination index to ensure the documents are available for search operations, this would also allow us to compare if the document count in both source and destination indices are consistent. This is an importatnt step in validating the success of the reindex
+POST tmp_cdm_sample_prod_index/_refresh
+
+#Validate that both source and destination indices have same number of documents
+GET tmp_cdm_sample_prod_index/_count
+GET cdm_sample_prod_index/_count
+
+
+#Delete the source indices
+DELETE cdm_sample_prod_index/_count
+
+
+#Recreate the index cdm_sample_prod_index that was just deleted. Also, set "number_of_replicas": 0 and "refresh_interval": "-1" to enhance reindex performance. IMPORTANT: Note that this is a production index and these settings are dynamic. They should be reconfigured once reindexing is complete. We're doing this at this stage to ensure the best performance for reindexing.
+#Note that I did not set "number_of_shards" as when creating the tmp-* index. This is deliberate, so it's not an ommision. This setting is fixed once index is created. If there is a need to change the number of shards, this would have been handled in the respective component template. So, for the most part this index creation: should be as follows:
+PUT cdm_sample_prod_index
+{
+  "settings": {
+    "number_of_replicas": 0,
+    "refresh_interval": "-1"
+  }
+}
+
+
+#Reindex back to the source index
+POST _reindex?wait_for_completion=false
+{
+  "source": {
+    "index": "tmp_cdm_sample_prod_index",
+    "size": 5000
+  },
+  "dest": {
+    "index": "cdm_sample_prod_index",
+    "op_type": "create"
+  },
+  "conflicts": "proceed"
+}
+
+
+#Retrieve the task_id from the step above and run the following command to track the progress of the reindex
+GET _tasks/<task_id>
+
+
+#Once since is completed, refresh the destination index to ensure the documents are available for search operations, this would also allow us to compare if the document count in both source and destination indices are consistent. This is an importatnt step in validating the success of the reindex
+POST tmp_cdm_sample_prod_index/_refresh
+POST cdm_sample_prod_index/_refresh
+
+
+#Validate that both source and destination indices have same number of documents
+GET tmp_cdm_sample_prod_index/_count
+GET cdm_sample_prod_index/_count
+
+
+#Cleanup: Delete the temporary index
+DELETE tmp_cdm_sample_prod_index/_count
