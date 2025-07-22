@@ -1,1 +1,201 @@
+#In this procedure, we want to reindex the index: "cdm_vuln_remediated" in-place using a temporary index "tmp_cdm_vuln_remediated"
 
+#If there's an existing temporary index: "tmp_cdm_vuln_remediated" of the index to be reindex, ensure to delete it. As a practice, we name the temporary index with tmp to prefix the production index
+DELETE tmp_cdm_vuln_remediated
+
+
+#Create the destination temporary index. Also ensure the number of replicas is zero and disable refresh interval. You may change the number_of_shards to any value starting from 1, depending on the number of hot nodes in the deployment and the size of the shard. All these index settings would help optimize the reindexing/indexing performance especially when in handling large indices with lots of data
+PUT tmp_cdm_vuln_remediated
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0,
+    "refresh_interval": "-1"
+  }
+}
+
+#Stop the transform with id: "cdm_vuln_latest". This is the transform that's writing data to the "cdm_vuln_remediated" index. The tranform needs to be stopped before starting the reindex. This is a very important step is is usually forgotten or skipped. If the transform is not stopped, the reindex may never complete and the document count in both source and destination indices would not be the same.
+
+#Validate that the transform has stopped. Ensure the status of the transform says "stopped" Otherwise, keep checking and wait until it says "stopped"
+POST _transform/cdm_vuln_latest/stop
+POST _transform/cdm_vuln_latest/_stats
+
+
+
+
+
+
+#Reindex as follows. The parameters "size", "op_type" and "conflicts" all help to optimize the reindexing and ensure reindexing continues even if there are conflicts without creating duplicate documents.
+POST _reindex?wait_for_completion=false
+{
+  "source": {
+    "index": "cdm_vuln_remediated",
+    "size": 5000
+  },
+  "dest": {
+    "index": "tmp_cdm_vuln_remediated",
+    "op_type": "create"
+  },
+  "conflicts": "proceed"
+}
+
+
+#Retrieve the task_id from the step above and run the following command to track the progress of the reindex
+GET _tasks/task_id
+
+
+#Once the reindex is completed, refresh the destination index to ensure the documents are available for search operations, this would also allow us to compare if the document count in both source and destination indices are consistent. This is an importatnt step in validating the success of the reindex
+POST tmp_cdm_vuln_remediated/_refresh
+
+#Validate that both source and destination indices have same number of documents
+GET tmp_cdm_vuln_remediated/_count
+GET cdm_vuln_remediated/_count
+
+
+#Delete the source index: cdm_vuln_remediated
+DELETE cdm_vuln_remediated
+
+#IMPORTANT: Note that we do NOT directly update the index template of any of our cdm_* indices, including the cdm_vuln_remediated index. Due to this we will need to update the component template: related to cdm_vuln_remediated index. This is the cdm_vuln_remediated_custom component template. But before updating the cdm_vuln_remediated_custom component template, we first need to get the component template.
+
+GET _component_template/cdm_vuln_remediated_custom
+
+
+#Let's say the above command returned the following for the component template:
+
+{
+  "component_templates": [
+    {
+      "name": "cdm_vuln_remediated_custom",
+      "component_template": {
+        "template": {
+          "settings": {
+            "index": {
+              "number_of_shards": "2"
+            }
+          },
+          "mappings": {
+            "properties": {
+              "custom": {
+                "type": "object",
+                "properties": {
+                  "host": {
+                    "type": "object",
+                    "properties": {
+                      "services": {
+                        "type": "object",
+                        "properties": {
+                          "active_directory": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
+
+
+#From the result of the GET _component_template/cdm_vuln_remediated_custom command, copy all the "settings" and "mappings" section and put this in the component template configuration to be updated as follows in the following example, but only change the number_of_shards if required, depending on how many shards we want for the index. Leave every other part of the component template as is. In the event that there's no need to update the number_of_shards, there's no need to update the component template at all. In that case, you can go ahead and skip this step. See following update to the component template where the number_of_shards is updated to 10
+
+PUT component_template/cdm_vuln_remediated_custom
+{
+  "template": {
+    "settings": {
+      "index": {
+        "number_of_shards": "10"
+      }
+    },
+    "mappings": {
+      "properties": {
+        "custom": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "object",
+              "properties": {
+                "services": {
+                  "type": "object",
+                  "properties": {
+                    "active_directory": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+#Recreate the index cdm_vuln_remediated that was just deleted. Also, set "number_of_replicas": 0 and "refresh_interval": "-1" to enhance reindex performance. IMPORTANT: Note that this is a production index and these settings are dynamic. They should be reconfigured once reindexing is complete. We're doing this at this stage to ensure the best performance for reindexing.
+
+#Note that I did not set "number_of_shards" as when creating the tmp-* index. This is deliberate, so it's not an ommision. This setting is fixed once index is created. If there is a need to change the number of shards, this would have been handled in the respective component template as stated earlier above. So, for the most part this index creation: should be as follows:
+PUT cdm_vuln_remediated
+{
+  "settings": {
+    "refresh_interval": "-1",
+    "number_of_replicas": 0
+  }
+}
+
+
+#Validate the index settings
+GET cdm_vuln_remediated/_settings
+
+
+
+#Reindex back to the source index
+POST _reindex?wait_for_completion=false
+{
+  "source": {
+    "index": "tmp_cdm_vuln_remediated",
+    "size": 5000
+  },
+  "dest": {
+    "index": "cdm_vuln_remediated",
+    "op_type": "create"
+  },
+  "conflicts": "proceed"
+}
+
+
+#Retrieve the task_id from the step above and run the following command to track the progress of the reindex
+GET _tasks/task_id
+
+
+#Once the reindex is completed, refresh the cdm_vuln_remediated index to ensure the documents are available for search operations, this would also allow us to compare if the document count in both source and destination indices are consistent. This is an importantt step in validating the success of the reindex
+POST tmp_cdm_vuln_remediated/_refresh
+POST cdm_vuln_remediated/_refresh
+
+
+#Validate that both source and destination indices have same number of documents
+GET tmp_cdm_vuln_remediated/_count
+GET cdm_vuln_remediated/_count
+
+
+#Reenable the refresh_interval and update number_of_replicas to 1;
+PUT cdm_vuln_remediated/_settings
+{
+  "refresh_interval": null,
+  "number_of_replicas": 1
+}
+
+#Start the Transform: cdm_vuln_latest
+
+#Validate that the transform has stopped. Ensure the status of the transform says "stopped" Otherwise, keep checking and wait until it says "started". Sometimes you may notice the staus stays "indexing" for a while, how long this takes may vary, it could be few secnds, to minutes to several hours. This is okay especially when the cdm_vuln_remediated index is very large
+POST _transform/cdm_vuln_latest/_start
+POST _transform/cdm_vuln_latest/_stats
+
+
+#Cleanup: Delete the temporary index
+DELETE tmp_cdm_vuln_remediated
