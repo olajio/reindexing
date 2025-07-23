@@ -1,4 +1,4 @@
-#In this procedure, we define the process to reshard an existing index and reindex it. We want to reindex the index: "cdm_sample_index" in-place using a temporary index "tmp_cdm_sample_index"
+#In this procedure, we define the process to review the sharding strategy and reshard an existing index and reindex it. This is to ensure the shard size is within the recommended range to ensure optimal indexing and search performance. In this document, we'll use a sample index named: cdm_sample_index, assuming it has shards that are very large. We want to reindex the index: "cdm_sample_index" in-place using a temporary index "tmp_cdm_sample_index", and then from "tmp_cdm_sample_index" back to the resharded "cdm_sample_index"
 
 #If there's an existing temporary index: "tmp_cdm_sample_index" of the index to be reindex, ensure to delete it. As a practice, we name the temporary index with tmp to prefix the production index
 DELETE tmp_cdm_sample_index
